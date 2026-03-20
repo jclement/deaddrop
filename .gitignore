@@ -1,0 +1,14 @@
+# Binaries
+/bin/
+*.exe
+
+# Generated PDFs
+deaddrop-*.pdf
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp

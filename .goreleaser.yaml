@@ -1,0 +1,39 @@
+version: 2
+project_name: deaddrop
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/deaddrop
+    binary: deaddrop
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+brews:
+  - repository:
+      owner: jclement
+      name: homebrew-tap
+    homepage: "https://github.com/jclement/deaddrop"
+    description: "Print your secrets without trusting your printer"
+    install: |
+      bin.install "deaddrop"
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^ci:", "^chore:"]
+
+release:
+  prerelease: auto
