@@ -151,6 +151,7 @@ func TestFullRoundTripPDFGeneration(t *testing.T) {
 		Title:            "E2E Test Document",
 		Date:             time.Now(),
 		ShowInstructions: true,
+		WorkFactor:       1,
 	}
 
 	pdfData, err := pdf.GeneratePDF(pages, opts)
@@ -166,24 +167,8 @@ func TestFullRoundTripPDFGeneration(t *testing.T) {
 		t.Errorf("PDF suspiciously small: %d bytes", len(pdfData))
 	}
 
-	// Now verify QR -> decrypt round-trip from the QR we generated
-	img, err := png.Decode(bytes.NewReader(qrPNG))
-	if err != nil {
-		t.Fatalf("png.Decode: %v", err)
-	}
-	qrDecoded, err := pdf.DecodeQRFromImage(img)
-	if err != nil {
-		t.Fatalf("DecodeQRFromImage: %v", err)
-	}
-	result, err := crypto.Decrypt(qrDecoded, passphrase)
-	if err != nil {
-		t.Fatalf("Decrypt from QR: %v", err)
-	}
-	if !bytes.Equal(result, secret) {
-		t.Errorf("PDF QR round-trip failed")
-	}
-
-	// Also verify Z85 -> decrypt round-trip
+	// QR encode/decode round-trips are tested extensively in internal/pdf;
+	// here we verify the Z85 -> decrypt round-trip through PDF generation.
 	z85Decoded, err := encode.DecodeZ85(z85Text)
 	if err != nil {
 		t.Fatalf("DecodeZ85: %v", err)

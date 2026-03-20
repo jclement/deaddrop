@@ -45,6 +45,7 @@ func runRestore(args []string) error {
 	if err != nil {
 		return err
 	}
+	defer zeroString(&passphrase)
 
 	// 3. Decrypt
 	secret, err := crypto.Decrypt(payload, passphrase)

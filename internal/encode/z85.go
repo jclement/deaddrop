@@ -1,22 +1,31 @@
 package encode
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 
 	"github.com/tilinna/z85"
 )
 
 // EncodeZ85 encodes arbitrary binary data to a Z85 string.
-// Handles padding: prepends a 1-byte pad-length indicator, then pads the
-// combined data to a multiple of 4 bytes before Z85 encoding.
+// Format: [padCount(1)] [CRC32(4)] [data...] [zeros(0-3)]
+// The CRC32 checksum (IEEE) covers the original data, enabling detection
+// of transcription errors when manually typing the Z85 block.
 func EncodeZ85(data []byte) (string, error) {
-	// Calculate padding needed: (data + 1 byte for pad count) must be divisible by 4
-	padNeeded := (4 - ((len(data) + 1) % 4)) % 4
+	checksum := crc32.ChecksumIEEE(data)
+	var crcBytes [4]byte
+	binary.BigEndian.PutUint32(crcBytes[:], checksum)
 
-	// Build padded input: [padCount] [data...] [zeros...]
-	padded := make([]byte, 1+len(data)+padNeeded)
+	// Calculate padding: (1 + 4 + len(data)) must be divisible by 4
+	headerLen := 1 + 4 // padCount + CRC32
+	padNeeded := (4 - ((headerLen + len(data)) % 4)) % 4
+
+	// Build padded input: [padCount] [CRC32] [data...] [zeros...]
+	padded := make([]byte, headerLen+len(data)+padNeeded)
 	padded[0] = byte(padNeeded)
-	copy(padded[1:], data)
+	copy(padded[1:5], crcBytes[:])
+	copy(padded[5:], data)
 	// Trailing bytes are already zero
 
 	dst := make([]byte, z85.EncodedLen(len(padded)))
@@ -27,7 +36,8 @@ func EncodeZ85(data []byte) (string, error) {
 }
 
 // DecodeZ85 decodes a Z85 string back to the original binary data,
-// reversing the padding applied by EncodeZ85.
+// reversing the padding applied by EncodeZ85. Verifies the CRC32
+// checksum and returns a clear error on mismatch (transcription error).
 func DecodeZ85(encoded string) ([]byte, error) {
 	src := []byte(encoded)
 	dst := make([]byte, z85.DecodedLen(len(src)))
@@ -35,8 +45,8 @@ func DecodeZ85(encoded string) ([]byte, error) {
 		return nil, fmt.Errorf("z85 decoding: %w", err)
 	}
 
-	if len(dst) == 0 {
-		return nil, fmt.Errorf("z85 decoded data is empty")
+	if len(dst) < 5 {
+		return nil, fmt.Errorf("z85 decoded data too short (need at least 5 bytes, got %d)", len(dst))
 	}
 
 	padCount := int(dst[0])
@@ -44,7 +54,15 @@ func DecodeZ85(encoded string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid pad count: %d", padCount)
 	}
 
-	data := dst[1 : len(dst)-padCount]
+	storedCRC := binary.BigEndian.Uint32(dst[1:5])
+	data := dst[5 : len(dst)-padCount]
+
+	// Verify checksum
+	actualCRC := crc32.ChecksumIEEE(data)
+	if storedCRC != actualCRC {
+		return nil, fmt.Errorf("checksum mismatch: the Z85 text may have been mistyped (expected %08x, got %08x)", storedCRC, actualCRC)
+	}
+
 	// Return a copy to avoid holding the larger buffer
 	result := make([]byte, len(data))
 	copy(result, data)

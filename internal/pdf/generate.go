@@ -40,6 +40,7 @@ type PDFOptions struct {
 	Date             time.Time
 	OutputPath       string
 	ShowInstructions bool
+	WorkFactor       int // scrypt work factor, shown in restore instructions
 }
 
 // PageData holds the data for a single PDF page.
@@ -73,7 +74,7 @@ func GeneratePDF(pages []PageData, opts PDFOptions) ([]byte, error) {
 		}
 
 		if opts.ShowInstructions && isFirstPage {
-			drawRestoreInstructions(p, len(pages))
+			drawRestoreInstructions(p, len(pages), opts.WorkFactor)
 		}
 
 		drawFooter(p, opts)
@@ -244,7 +245,7 @@ func drawPassphraseField(p *fpdf.Fpdf) {
 	p.SetY(y + boxHeight + 4)
 }
 
-func drawRestoreInstructions(p *fpdf.Fpdf, totalPages int) {
+func drawRestoreInstructions(p *fpdf.Fpdf, totalPages int, workFactor int) {
 	db := ui.PDFDeepBlue
 	dg := ui.PDFDarkGray
 
@@ -272,13 +273,13 @@ func drawRestoreInstructions(p *fpdf.Fpdf, totalPages int) {
 			"The QR code holds the payload as a base64-encoded string; scan it with any QR reader and base64-decode the result. " +
 			"The Z85 text is a ZeroMQ Base-85 encoding of the same data; type it into a file and decode it with any Z85-compatible tool.",
 
-		"Both paths produce identical binary output. The first four bytes are the ASCII header \"DD01\", which identifies the format " +
-			"and should be stripped. Everything after that is a standard age-encrypted file using a scrypt passphrase recipient " +
-			"(work factor 18). Save it with an .age extension and decrypt it with any age-compatible tool using the passphrase above.",
+		fmt.Sprintf("Both paths produce identical binary output. The first four bytes are the ASCII header \"DD01\", which identifies the format "+
+			"and should be stripped. Everything after that is a standard age-encrypted file using a scrypt passphrase recipient "+
+			"(work factor %d). Save it with an .age extension and decrypt it with any age-compatible tool using the passphrase above.", workFactor),
 
-		"Z85 padding note: the Z85 block uses a thin padding layer so the data aligns to 4 bytes. The very first byte after " +
-			"Z85-decoding is a pad count (0--3). Skip that byte and the four DD01 header bytes (5 bytes total from the start), " +
-			"then trim that many zero bytes from the end. The remainder is the age ciphertext.",
+		"Z85 integrity note: the Z85 block includes a CRC32 checksum for error detection. After Z85-decoding, byte 0 is a pad count (0--3), " +
+			"bytes 1--4 are a big-endian CRC32 of the original payload, then the payload follows, with pad-count zero bytes at the end. " +
+			"Strip the first 5 bytes and the trailing pad bytes; then strip the 4-byte DD01 header. The remainder is the age ciphertext.",
 	}
 
 	if totalPages > 1 {

@@ -148,6 +148,10 @@ mise run build       # Build local binary
 mise run build:all   # Build all targets (GoReleaser snapshot)
 ```
 
+## Acknowledgements
+
+This project was vibe coded with [Claude Code](https://claude.ai/claude-code).
+
 ## License
 
 [MIT](LICENSE)

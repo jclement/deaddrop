@@ -19,6 +19,10 @@ var ErrInvalidHeader = errors.New("invalid dead drop header: expected DD01")
 // DefaultWorkFactor is the scrypt work factor (log2 N) for age encryption.
 const DefaultWorkFactor = 18
 
+// MinWorkFactor is the minimum recommended scrypt work factor.
+// Values below this are trivially brute-forceable.
+const MinWorkFactor = 14
+
 // Compress applies zlib compression to data.
 func Compress(data []byte) ([]byte, error) {
 	var buf bytes.Buffer

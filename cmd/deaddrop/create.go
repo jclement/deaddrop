@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unsafe"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -76,6 +77,11 @@ type createOptions struct {
 }
 
 func runCreate(args []string, opts createOptions) error {
+	// 0. Validate work factor
+	if opts.WorkFactor < crypto.MinWorkFactor {
+		return fmt.Errorf("work factor %d is below minimum %d (too weak for production use)", opts.WorkFactor, crypto.MinWorkFactor)
+	}
+
 	// 1. Read the secret
 	secret, sourceName, err := readSecret(args)
 	if err != nil {
@@ -96,6 +102,9 @@ func runCreate(args []string, opts createOptions) error {
 	if err != nil {
 		return fmt.Errorf("generating passphrase: %w", err)
 	}
+	// Best-effort: zero passphrase memory when we're done with it.
+	// Go strings are immutable, but we can zero the backing bytes of this copy.
+	defer zeroString(&passphrase)
 
 	// 4. Encrypt
 	payload, err := crypto.Encrypt(secret, passphrase, opts.WorkFactor)
@@ -111,6 +120,9 @@ func runCreate(args []string, opts createOptions) error {
 
 	// 6. Split payload if needed, generate QR for each chunk
 	chunks := pdf.SplitPayload(payload)
+	if chunks == nil {
+		return fmt.Errorf("payload too large to split into QR codes (exceeds 255 chunks)")
+	}
 	pages := make([]pdf.PageData, len(chunks))
 	for i, chunk := range chunks {
 		qrPNG, err := pdf.EncodeQR(chunk)
@@ -148,6 +160,7 @@ func runCreate(args []string, opts createOptions) error {
 		Date:             time.Now(),
 		OutputPath:       outputPath,
 		ShowInstructions: !opts.NoInstructions,
+		WorkFactor:       opts.WorkFactor,
 	}
 	if err := pdf.GeneratePDFToFile(pages, pdfOpts); err != nil {
 		return fmt.Errorf("generating PDF: %w", err)
@@ -218,4 +231,17 @@ func readSecret(args []string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("reading secret: %w", err)
 	}
 	return []byte(secret), "secret", nil
+}
+
+// zeroString overwrites the backing bytes of a string variable with zeros.
+// Best-effort memory hygiene: Go strings are immutable and GC'd, so this
+// is not a guarantee, but it reduces the window of exposure.
+func zeroString(s *string) {
+	if len(*s) == 0 {
+		return
+	}
+	b := unsafe.Slice(unsafe.StringData(*s), len(*s))
+	for i := range b {
+		b[i] = 0
+	}
 }

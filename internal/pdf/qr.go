@@ -93,9 +93,14 @@ func SplitPayload(payload []byte) [][]byte {
 		return [][]byte{payload}
 	}
 
-	// Each chunk has a 4-byte header: "DS" + index + total
+	// Each chunk has a 4-byte header: "DS" + index byte + total byte
 	chunkDataSize := MaxQRBytes - 4
 	totalChunks := (len(payload) + chunkDataSize - 1) / chunkDataSize
+
+	if totalChunks > 255 {
+		// Index and total are single bytes; payloads this large are not supported.
+		return nil
+	}
 
 	chunks := make([][]byte, totalChunks)
 	for i := range totalChunks {
