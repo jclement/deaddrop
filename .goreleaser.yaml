@@ -25,6 +25,7 @@ brews:
   - repository:
       owner: jclement
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/jclement/deaddrop"
     description: "Print your secrets without trusting your printer"
     install: |
