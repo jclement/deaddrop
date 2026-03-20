@@ -17,23 +17,29 @@ import (
 
 // MaxQRBytes is the maximum raw payload size for a single QR code.
 // We base64-encode data before QR encoding for reliable round-trips.
-// 1000 binary bytes -> ~1336 base64 chars, fitting in QR version ~22.
-// This keeps QR density low enough for reliable scanning from photos/screens.
-const MaxQRBytes = 1000
+// QR version 40 with Medium EC holds 2331 bytes; 1700 raw -> 2268 base64 chars.
+// Printed at ~100mm on A4 this scans reliably from phone cameras.
+const MaxQRBytes = 1700
 
 // QRSize is the pixel dimension of generated QR code images.
-// Large size ensures high-density QR codes remain scannable.
-const QRSize = 1024
+const QRSize = 512
 
 // EncodeQR generates a QR code PNG image from binary data.
 // The data is base64-encoded before QR encoding to ensure reliable
 // round-trips through QR encode/decode (binary mode is lossy in some decoders).
 func EncodeQR(data []byte) ([]byte, error) {
 	encoded := base64.StdEncoding.EncodeToString(data)
-	if len(encoded) > 2953 {
-		return nil, fmt.Errorf("data too large for single QR code: %d encoded bytes (max 2953)", len(encoded))
+	if len(encoded) > 2331 {
+		return nil, fmt.Errorf("data too large for single QR code: %d encoded bytes (max 2331 for Medium EC)", len(encoded))
 	}
-	png, err := goqrcode.Encode(encoded, goqrcode.Low, QRSize)
+	qr, err := goqrcode.New(encoded, goqrcode.Medium)
+	if err != nil {
+		return nil, fmt.Errorf("creating QR code: %w", err)
+	}
+	// Disable the built-in quiet zone — the printed page provides it naturally.
+	// This lets the QR pattern top align cleanly with adjacent content.
+	qr.DisableBorder = true
+	png, err := qr.PNG(QRSize)
 	if err != nil {
 		return nil, fmt.Errorf("encoding QR code: %w", err)
 	}

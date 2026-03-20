@@ -18,15 +18,14 @@ import (
 
 func restoreCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "restore [image]",
+		Use:   "restore [image...]",
 		Short: "Decrypt a secret from a QR code image or Z85 text",
 		Long: `Restore a secret from a dead drop.
 
 Input sources:
-  - Image file argument (PNG/JPEG): scans QR code from the image
+  - Image file arguments (PNG/JPEG): scans QR codes and reassembles multi-page payloads
   - "-" argument: reads raw ciphertext from stdin
   - No argument: prompts to paste Z85-encoded text`,
-		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRestore(args)
 		},
@@ -64,26 +63,30 @@ func runRestore(args []string) error {
 }
 
 func readPayload(args []string) ([]byte, error) {
-	if len(args) == 1 {
-		if args[0] == "-" {
-			// Raw ciphertext from stdin
-			data, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return nil, fmt.Errorf("reading stdin: %w", err)
+	if len(args) >= 1 && args[0] != "-" {
+		// Image file(s): scan QR code(s)
+		chunks := make([][]byte, 0, len(args))
+		for _, path := range args {
+			if !quiet {
+				fmt.Fprintf(os.Stderr, "Scanning QR code from %s...\n", path)
 			}
-			return data, nil
+			data, err := pdf.DecodeQR(path)
+			if err != nil {
+				return nil, fmt.Errorf("scanning QR code from %s: %w", path, err)
+			}
+			chunks = append(chunks, data)
 		}
+		if !quiet {
+			fmt.Fprintf(os.Stderr, ui.StyleSuccess.Render("Scanned %d QR code(s).")+"\n", len(chunks))
+		}
+		return pdf.ReassemblePayload(chunks)
+	}
 
-		// Image file: scan QR code
-		if !quiet {
-			fmt.Fprintf(os.Stderr, "Scanning QR code from %s...\n", args[0])
-		}
-		data, err := pdf.DecodeQR(args[0])
+	if len(args) == 1 && args[0] == "-" {
+		// Raw ciphertext from stdin
+		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			return nil, fmt.Errorf("scanning QR code: %w", err)
-		}
-		if !quiet {
-			fmt.Fprintln(os.Stderr, ui.StyleSuccess.Render("QR code found."))
+			return nil, fmt.Errorf("reading stdin: %w", err)
 		}
 		return data, nil
 	}

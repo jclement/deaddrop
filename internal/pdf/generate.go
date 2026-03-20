@@ -14,15 +14,17 @@ import (
 
 // Layout constants (mm)
 const (
-	marginLeft   = 25.0
-	marginRight  = 25.0
-	marginTop    = 20.0
-	marginBottom = 15.0
+	marginLeft   = 15.0
+	marginRight  = 15.0
+	marginTop    = 15.0
+	marginBottom = 12.0
 	pageWidth    = 210.0 // A4
 	pageHeight   = 297.0
 	contentWidth = pageWidth - marginLeft - marginRight
-	qrImageSize  = 65.0 // QR code display size in mm
-	z85LineWidth = 60    // characters per line in Z85 block
+	z85LineWidth = 50    // characters per line in Z85 block
+	z85ColWidth  = 75.0  // just wide enough for 50 monospace chars + padding
+	qrZ85Gap     = 4.0   // gap between QR and Z85 columns
+	qrImageSize  = contentWidth - z85ColWidth - qrZ85Gap // QR fills remaining width
 )
 
 // Font names (registered with fpdf)
@@ -64,19 +66,17 @@ func GeneratePDF(pages []PageData, opts PDFOptions) ([]byte, error) {
 		isFirstPage := i == 0
 
 		drawHeader(p, opts)
-		drawQRCode(p, page.QRCodePNG)
+		drawQRAndZ85(p, page)
 
 		if isFirstPage {
 			drawPassphraseField(p)
 		}
 
-		drawZ85Block(p, page.Z85Text)
-
 		if opts.ShowInstructions && isFirstPage {
-			drawRestoreInstructions(p)
+			drawRestoreInstructions(p, len(pages))
 		}
 
-		drawFooter(p)
+		drawFooter(p, opts)
 
 		if page.TotalPages > 1 {
 			drawPageNumber(p, page.PageNumber, page.TotalPages)
@@ -101,17 +101,25 @@ func GeneratePDFToFile(pages []PageData, opts PDFOptions) error {
 
 func drawHeader(p *fpdf.Fpdf, opts PDFOptions) {
 	db := ui.PDFDeepBlue
+	dg := ui.PDFDarkGray
 
-	// "DEAD DROP" title
+	// Page heading: title > label > "Dead Drop"
+	heading := "Dead Drop"
+	if opts.Label != "" {
+		heading = opts.Label
+	}
+	if opts.Title != "" {
+		heading = opts.Title
+	}
+
 	p.SetFont(fontRoboto, "B", 22)
 	p.SetTextColor(db[0], db[1], db[2])
 	p.SetY(marginTop)
 	p.SetX(marginLeft)
-	p.CellFormat(contentWidth/2, 10, "DEAD DROP", "", 0, "L", false, 0, "")
+	p.CellFormat(contentWidth/2, 10, heading, "", 0, "L", false, 0, "")
 
 	// Timestamp right-aligned
 	p.SetFont(fontRoboto, "", 9)
-	dg := ui.PDFDarkGray
 	p.SetTextColor(dg[0], dg[1], dg[2])
 	p.CellFormat(contentWidth/2, 10, opts.Date.Format("2006-01-02 15:04"), "", 1, "R", false, 0, "")
 
@@ -121,42 +129,81 @@ func drawHeader(p *fpdf.Fpdf, opts PDFOptions) {
 	y := p.GetY() + 1
 	p.Line(marginLeft, y, pageWidth-marginRight, y)
 	p.SetY(y + 4)
-
-	// Title (centered, if provided)
-	if opts.Title != "" {
-		p.SetFont(fontRoboto, "B", 14)
-		p.SetTextColor(db[0], db[1], db[2])
-		p.CellFormat(contentWidth, 8, opts.Title, "", 1, "C", false, 0, "")
-		p.SetY(p.GetY() + 2)
-	}
-
-	// Label and algorithm metadata
-	p.SetFont(fontRoboto, "", 9)
-	p.SetTextColor(dg[0], dg[1], dg[2])
-	if opts.Label != "" {
-		p.SetX(marginLeft)
-		p.CellFormat(contentWidth, 5, fmt.Sprintf("Label: %s", opts.Label), "", 1, "L", false, 0, "")
-	}
-	p.SetX(marginLeft)
-	p.CellFormat(contentWidth, 5, "Algorithm: age (scrypt, work factor 18)", "", 1, "L", false, 0, "")
-	p.SetY(p.GetY() + 3)
 }
 
-func drawQRCode(p *fpdf.Fpdf, qrPNG []byte) {
-	if len(qrPNG) == 0 {
-		return
+func drawQRAndZ85(p *fpdf.Fpdf, page PageData) {
+	startY := p.GetY()
+	bottomY := startY // tracks the bottom of whichever column is taller
+
+	// === Left column: QR code ===
+	if len(page.QRCodePNG) > 0 {
+		name := fmt.Sprintf("qr_%d", time.Now().UnixNano())
+		imgOpts := fpdf.ImageOptions{ImageType: "png", ReadDpi: true}
+		p.RegisterImageOptionsReader(name, imgOpts, bytes.NewReader(page.QRCodePNG))
+		p.ImageOptions(name, marginLeft, startY, qrImageSize, qrImageSize, false, imgOpts, 0, "")
+		if startY+qrImageSize > bottomY {
+			bottomY = startY + qrImageSize
+		}
 	}
 
-	// Register the QR code image
-	name := fmt.Sprintf("qr_%d", time.Now().UnixNano())
-	opts := fpdf.ImageOptions{ImageType: "png", ReadDpi: true}
-	p.RegisterImageOptionsReader(name, opts, bytes.NewReader(qrPNG))
+	// === Right column: Z85 text ===
+	if page.Z85Text != "" {
+		db := ui.PDFDeepBlue
+		dg := ui.PDFDarkGray
+		lg := ui.PDFLightGray
+		colX := marginLeft + qrImageSize + qrZ85Gap
 
-	// Center the QR code
-	x := (pageWidth - qrImageSize) / 2
-	y := p.GetY()
-	p.ImageOptions(name, x, y, qrImageSize, qrImageSize, false, opts, 0, "")
-	p.SetY(y + qrImageSize + 5)
+		// Section heading
+		p.SetFont(fontRoboto, "B", 8)
+		p.SetTextColor(db[0], db[1], db[2])
+		p.SetXY(colX, startY)
+		p.CellFormat(z85ColWidth, 4, "Encoded Payload (fallback)", "", 1, "L", false, 0, "")
+
+		// Intro text
+		p.SetFont(fontRoboto, "", 6.5)
+		p.SetTextColor(dg[0], dg[1], dg[2])
+		p.SetXY(colX, p.GetY()+1)
+		// Use manual word wrapping within the column
+		p.SetLeftMargin(colX)
+		p.MultiCell(z85ColWidth, 3,
+			"If the QR code is damaged, manually type this Z85-encoded text and decode it.",
+			"", "L", false)
+		p.SetLeftMargin(marginLeft)
+		p.SetY(p.GetY() + 1.5)
+
+		// Z85 text block with alternating row backgrounds
+		lines := encode.FormatZ85Block(page.Z85Text, z85LineWidth)
+		p.SetFont(fontRobotoMono, "", 6.5)
+
+		blockY := p.GetY()
+		lineHeight := 3.2
+
+		// Draw background box
+		blockHeight := float64(len(lines))*lineHeight + 2
+		p.SetDrawColor(dg[0], dg[1], dg[2])
+		p.SetLineWidth(0.2)
+		p.Rect(colX, blockY, z85ColWidth, blockHeight, "D")
+
+		for i, line := range lines {
+			y := blockY + 1 + float64(i)*lineHeight
+
+			if i%2 == 1 {
+				p.SetFillColor(lg[0], lg[1], lg[2])
+				p.Rect(colX+0.2, y, z85ColWidth-0.4, lineHeight, "F")
+			}
+
+			p.SetTextColor(0, 0, 0)
+			p.SetXY(colX+2, y)
+			p.CellFormat(z85ColWidth-4, lineHeight, line, "", 0, "L", false, 0, "")
+		}
+
+		z85Bottom := blockY + blockHeight
+		if z85Bottom > bottomY {
+			bottomY = z85Bottom
+		}
+	}
+
+	p.SetY(bottomY + 5)
 }
 
 func drawPassphraseField(p *fpdf.Fpdf) {
@@ -197,108 +244,74 @@ func drawPassphraseField(p *fpdf.Fpdf) {
 	p.SetY(y + boxHeight + 4)
 }
 
-func drawZ85Block(p *fpdf.Fpdf, z85Text string) {
-	if z85Text == "" {
-		return
-	}
-
+func drawRestoreInstructions(p *fpdf.Fpdf, totalPages int) {
 	db := ui.PDFDeepBlue
 	dg := ui.PDFDarkGray
-	lg := ui.PDFLightGray
+
+	const (
+		fontSize = 6.5
+		lineH    = 3.0
+	)
 
 	// Section heading
 	p.SetFont(fontRoboto, "B", 9)
 	p.SetTextColor(db[0], db[1], db[2])
 	p.SetX(marginLeft)
-	p.CellFormat(contentWidth, 5, "Encoded Payload (fallback)", "", 1, "L", false, 0, "")
-
-	// Intro text
-	p.SetFont(fontRoboto, "", 7)
-	p.SetTextColor(dg[0], dg[1], dg[2])
-	p.SetX(marginLeft)
-	p.MultiCell(contentWidth, 3.5,
-		"If the QR code is damaged or unscannable, manually type this Z85-encoded text and decode it.",
-		"", "L", false)
-	p.SetY(p.GetY() + 2)
-
-	// Z85 text block with alternating row backgrounds
-	lines := encode.FormatZ85Block(z85Text, z85LineWidth)
-	p.SetFont(fontRobotoMono, "", 7)
-
-	blockY := p.GetY()
-	lineHeight := 3.5
-
-	// Draw background box
-	blockHeight := float64(len(lines))*lineHeight + 2
-	p.SetDrawColor(dg[0], dg[1], dg[2])
-	p.SetLineWidth(0.2)
-	p.Rect(marginLeft, blockY, contentWidth, blockHeight, "D")
-
-	for i, line := range lines {
-		y := blockY + 1 + float64(i)*lineHeight
-
-		// Alternating row background
-		if i%2 == 1 {
-			p.SetFillColor(lg[0], lg[1], lg[2])
-			p.Rect(marginLeft+0.2, y, contentWidth-0.4, lineHeight, "F")
-		}
-
-		p.SetTextColor(0, 0, 0)
-		p.SetXY(marginLeft+2, y)
-		p.CellFormat(contentWidth-4, lineHeight, line, "", 0, "L", false, 0, "")
-	}
-
-	p.SetY(blockY + blockHeight + 5)
-}
-
-func drawRestoreInstructions(p *fpdf.Fpdf) {
-	db := ui.PDFDeepBlue
-	dg := ui.PDFDarkGray
-
-	// Check if we have enough space, otherwise skip
-	if p.GetY() > pageHeight-60 {
-		return
-	}
-
-	// Section heading
-	p.SetFont(fontRoboto, "B", 9)
-	p.SetTextColor(db[0], db[1], db[2])
-	p.SetX(marginLeft)
-	p.CellFormat(contentWidth, 5, "Restore Without Dead Drop", "", 1, "L", false, 0, "")
+	p.CellFormat(contentWidth, 5, "Restoring This Document", "", 1, "L", false, 0, "")
 	p.SetY(p.GetY() + 1)
 
-	// Steps
-	p.SetFont(fontRoboto, "", 7.5)
+	p.SetFont(fontRoboto, "", fontSize)
 	p.SetTextColor(dg[0], dg[1], dg[2])
+	p.SetLeftMargin(marginLeft)
 
-	steps := []string{
-		"1. Scan the QR code (or type the Z85 block above into a file)",
-		"2. If using Z85 text, decode with: deaddrop restore",
-		"   Or use any Z85/Base85 decoder to get the binary data",
-		"3. Save the binary output to a file (e.g. secret.age)",
-		"4. Run: age -d secret.age",
-		"5. Enter the passphrase written above",
+	paras := []string{
+		"This document is self-contained. You do not need the Dead Drop tool to recover your secret -- " +
+			"only a standard age decryptor (age-encryption.org) and the handwritten passphrase above.",
+
+		"The QR code and the Z85 text block both contain the same encrypted payload. " +
+			"The QR code holds the payload as a base64-encoded string; scan it with any QR reader and base64-decode the result. " +
+			"The Z85 text is a ZeroMQ Base-85 encoding of the same data; type it into a file and decode it with any Z85-compatible tool.",
+
+		"Both paths produce identical binary output. The first four bytes are the ASCII header \"DD01\", which identifies the format " +
+			"and should be stripped. Everything after that is a standard age-encrypted file using a scrypt passphrase recipient " +
+			"(work factor 18). Save it with an .age extension and decrypt it with any age-compatible tool using the passphrase above.",
+
+		"Z85 padding note: the Z85 block uses a thin padding layer so the data aligns to 4 bytes. The very first byte after " +
+			"Z85-decoding is a pad count (0--3). Skip that byte and the four DD01 header bytes (5 bytes total from the start), " +
+			"then trim that many zero bytes from the end. The remainder is the age ciphertext.",
 	}
-	for _, step := range steps {
+
+	if totalPages > 1 {
+		paras = append(paras, fmt.Sprintf(
+			"Multi-page note: this document spans %d pages. Each page contains a different chunk of the payload, not a copy. "+
+				"The QR codes carry a \"DS\" header with chunk index and total count. Decode all %d QR codes (or Z85 blocks), "+
+				"strip the 4-byte DS header from each, and concatenate the data in page order to reconstruct the full payload. "+
+				"Then proceed with DD01 stripping and age decryption as described above.",
+			totalPages, totalPages))
+	}
+
+	for i, para := range paras {
 		p.SetX(marginLeft)
-		p.CellFormat(contentWidth, 4, step, "", 1, "L", false, 0, "")
+		p.MultiCell(contentWidth, lineH, para, "", "L", false)
+		if i < len(paras)-1 {
+			p.SetY(p.GetY() + 1)
+		}
 	}
-
-	p.SetY(p.GetY() + 2)
-	p.SetFont(fontRoboto, "", 7)
-	p.SetX(marginLeft)
-	p.MultiCell(contentWidth, 3.5,
-		"The payload is age-encrypted (age-encryption.org) using a passphrase/scrypt recipient. "+
-			"Any age-compatible tool can decrypt it.",
-		"", "L", false)
 }
 
-func drawFooter(p *fpdf.Fpdf) {
+func drawFooter(p *fpdf.Fpdf, opts PDFOptions) {
 	dg := ui.PDFDarkGray
 	p.SetFont(fontRoboto, "", 7)
 	p.SetTextColor(dg[0], dg[1], dg[2])
 	p.SetXY(marginLeft, pageHeight-marginBottom)
-	p.CellFormat(contentWidth, 4, "Generated by Dead Drop", "", 0, "R", false, 0, "")
+
+	// Show label on the left if it exists (source filename, etc.)
+	if opts.Label != "" {
+		p.CellFormat(contentWidth/2, 4, opts.Label, "", 0, "L", false, 0, "")
+	}
+
+	p.SetXY(marginLeft+contentWidth/2, pageHeight-marginBottom)
+	p.CellFormat(contentWidth/2, 4, "Generated by Dead Drop", "", 0, "R", false, 0, "")
 }
 
 func drawPageNumber(p *fpdf.Fpdf, page, total int) {
@@ -306,5 +319,5 @@ func drawPageNumber(p *fpdf.Fpdf, page, total int) {
 	p.SetFont(fontRoboto, "", 7)
 	p.SetTextColor(dg[0], dg[1], dg[2])
 	p.SetXY(marginLeft, pageHeight-marginBottom)
-	p.CellFormat(contentWidth, 4, fmt.Sprintf("Page %d of %d", page, total), "", 0, "L", false, 0, "")
+	p.CellFormat(contentWidth, 4, fmt.Sprintf("Page %d of %d", page, total), "", 0, "C", false, 0, "")
 }
